@@ -367,8 +367,13 @@ class BaseRetrying(ABC):
     def iter(self, retry_state: "RetryCallState") -> t.Union[DoAttempt, DoSleep, t.Any]:  # noqa
         self._begin_iter(retry_state)
         result = None
-        for action in self.iter_state.actions:
-            result = action(retry_state)
+        try:
+            for action in self.iter_state.actions:
+                result = action(retry_state)
+        finally:
+            # The actions are bound methods of self: keeping them after the
+            # iteration makes a reference cycle.
+            self.iter_state.reset()
         return result
 
     def _begin_iter(self, retry_state: "RetryCallState") -> None:  # noqa
