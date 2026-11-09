@@ -180,9 +180,13 @@ class RetryError(Exception):
         super().__init__(last_attempt)
 
     def reraise(self) -> t.NoReturn:
-        if self.last_attempt.failed:
-            raise self.last_attempt.result()
-        raise self
+        try:
+            if self.last_attempt.failed:
+                raise self.last_attempt.result()
+            raise self
+        finally:
+            # This frame ends up in the traceback of the exception raised here.
+            self = None  # type: ignore[assignment]
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}[{self.last_attempt}]"
@@ -412,11 +416,17 @@ class BaseRetrying(ABC):
                 return
 
             def exc_check(rs: "RetryCallState") -> None:
-                fut = t.cast(Future, rs.outcome)
+                # The exception's traceback holds the frames of this call, and those frames
+                # hold rs: keeping the outcome on rs, or fut and retry_exc in this frame,
+                # makes a reference cycle through the exception.
+                fut, rs.outcome = t.cast(Future, rs.outcome), None
                 retry_exc = self.retry_error_cls(fut)
-                if self.reraise:
-                    raise retry_exc.reraise()
-                raise retry_exc from fut.exception()
+                try:
+                    if self.reraise:
+                        raise retry_exc.reraise()
+                    raise retry_exc from fut.exception()
+                finally:
+                    del fut, retry_exc
 
             self._add_action_func(exc_check)
             return
